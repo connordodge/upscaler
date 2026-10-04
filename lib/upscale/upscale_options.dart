@@ -52,7 +52,8 @@ bool needsAiUpscale(PixelSize size, OutputSize outputSize, UpscaleMode mode) =>
 
 /// Nudges [offset] by 1px where `sips -c` (macOS 26) misbehaves: an all-zero `--cropOffset`
 /// centers the crop instead of anchoring it top-left, and a Y offset that reaches the bottom edge
-/// skips the crop entirely, leaving the image uncropped.
+/// skips the crop entirely, leaving the image uncropped. With a 1px Y overshoot the only safe
+/// offset is 0, which centers the crop and still drops a single row.
 ({int x, int y}) sipsSafeOffset(
   PixelSize covered,
   OutputSize outputSize,
@@ -61,7 +62,7 @@ bool needsAiUpscale(PixelSize size, OutputSize outputSize, UpscaleMode mode) =>
   final maxX = covered.width - outputSize.width;
   final maxY = covered.height - outputSize.height;
   var (:x, :y) = offset;
-  if (maxY > 1 && y >= maxY) y = maxY - 1;
+  if (maxY >= 1 && y >= maxY) y = maxY - 1;
   if (x == 0 && y == 0) {
     if (maxY > 1) {
       y = 1;

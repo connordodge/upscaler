@@ -128,6 +128,20 @@ void main() {
       expect(sipsSafeOffset(covered, _portrait, (x: 0, y: 0)), (x: 1, y: 0));
     });
 
+    test('keeps a 1px Y overshoot off the bottom edge', () {
+      // 9:16 locked at H 1000 gives 563 × 1000; a 1080 × 1920 source covers it at 563 × 1001.
+      const covered = (width: 563, height: 1001);
+      const output = (width: 563, height: 1000);
+      expect(
+        sipsSafeOffset(covered, output, cropOffset(covered, output, 0.5)),
+        (
+          x: 0,
+          y: 0,
+        ),
+      );
+      expect(sipsSafeOffset(covered, output, (x: 0, y: 1)), (x: 0, y: 0));
+    });
+
     test('leaves an exact Output Size alone', () {
       expect(sipsSafeOffset(_portrait, _portrait, (x: 0, y: 0)), (
         x: 0,
