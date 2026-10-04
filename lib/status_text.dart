@@ -1,3 +1,4 @@
+import 'upscale/size_editing.dart';
 import 'upscale/upscale_options.dart';
 
 /// Which view fills the stage once an image is loaded.
@@ -10,6 +11,14 @@ String _compact(PixelSize size) => '${size.width}×${size.height}';
 String _spaced(PixelSize size) => '${size.width} × ${size.height}';
 
 const noImageStatus = 'No image';
+
+/// Right side of the status bar while a typed size is invalid, or null when none is. It takes
+/// priority over every other right-side hint; with both fields invalid the width is named.
+String? fixSizeHint(Set<Side> invalid) {
+  if (invalid.contains(Side.width)) return 'Fix the width to upscale';
+  if (invalid.contains(Side.height)) return 'Fix the height to upscale';
+  return null;
+}
 
 /// Right side of the status bar when no image is loaded: `Output {W}×{H}`.
 String emptyStatusHint(OutputSize outputSize) =>

@@ -157,6 +157,13 @@ void main() {
     });
   });
 
+  test('fixSizeHint names the invalid field, width first', () {
+    expect(fixSizeHint({}), isNull);
+    expect(fixSizeHint({.width}), 'Fix the width to upscale');
+    expect(fixSizeHint({.height}), 'Fix the height to upscale');
+    expect(fixSizeHint({.height, .width}), 'Fix the width to upscale');
+  });
+
   test('emptyStatusHint', () {
     expect(emptyStatusHint(output), 'Output 3840×2160');
     expect(emptyStatusHint(portrait), 'Output 1000×1500');

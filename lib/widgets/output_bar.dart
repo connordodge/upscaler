@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import '../upscale/size_editing.dart';
 import '../upscale/size_presets.dart';
 import '../upscale/upscale_options.dart';
 import 'controls.dart';
@@ -19,6 +20,15 @@ abstract final class OutputBarKeys {
   static const width = ValueKey('output-width');
   static const lock = ValueKey('ratio-lock');
   static const height = ValueKey('output-height');
+
+  /// The `256–8192 px` hint shown while a typed side is invalid.
+  static const rangeHint = ValueKey('output-range-hint');
+
+  /// The field for [side].
+  static ValueKey<String> field(Side side) => switch (side) {
+    .width => width,
+    .height => height,
+  };
 }
 
 /// The 52px bar under the toolbar: `OUTPUT`, the Aspect Ratio chips (plus a selected `Custom` chip
@@ -26,6 +36,11 @@ abstract final class OutputBarKeys {
 ///
 /// Presentational: [HomePage] owns the values and applies every change. A false [enabled] (while
 /// upscaling) disables every control.
+///
+/// The fields report typed text through [onSizeTyped] on Enter, on focus loss and on a click
+/// anywhere outside the field, never per keystroke. A side in [invalid] keeps its typed text, a red
+/// outline and the `256–8192 px` hint until the page clears it; Escape restores the field's last
+/// valid value and reports [onSizeReverted].
 class OutputBar extends StatefulWidget {
   const OutputBar({
     super.key,
@@ -35,9 +50,10 @@ class OutputBar extends StatefulWidget {
     required this.enabled,
     required this.onRatioPicked,
     required this.onPresetPicked,
+    this.invalid = const {},
     this.onLockChanged,
-    this.onWidthSubmitted,
-    this.onHeightSubmitted,
+    this.onSizeTyped,
+    this.onSizeReverted,
   });
 
   final OutputSize outputSize;
@@ -51,40 +67,103 @@ class OutputBar extends StatefulWidget {
   /// A Size Preset picked from the menu, with the ratio it is listed under.
   final void Function(Ratio ratio, OutputSize size) onPresetPicked;
 
+  /// Sides whose typed text the page rejected. Those fields keep showing it.
+  final Set<Side> invalid;
+
   /// Until these are given, the lock and fields only show the current state.
   final ValueChanged<bool>? onLockChanged;
-  final ValueChanged<String>? onWidthSubmitted;
-  final ValueChanged<String>? onHeightSubmitted;
+
+  /// Text typed into [side]'s field, to apply or reject. Only called when there is something new
+  /// to apply: text that differs from the current value, or any text in an invalid field.
+  final void Function(Side side, String text)? onSizeTyped;
+
+  /// Escape in [side]'s field restored its last valid value.
+  final ValueChanged<Side>? onSizeReverted;
 
   @override
   State<OutputBar> createState() => _OutputBarState();
 }
 
 class _OutputBarState extends State<OutputBar> {
-  late final _width = TextEditingController(text: '${widget.outputSize.width}');
-  late final _height = TextEditingController(
-    text: '${widget.outputSize.height}',
-  );
-  final _widthFocus = FocusNode(debugLabel: 'Output width');
-  final _heightFocus = FocusNode(debugLabel: 'Output height');
+  late final _text = {
+    for (final side in Side.values)
+      side: TextEditingController(text: '${side.of(widget.outputSize)}'),
+  };
+  final _focus = {
+    for (final side in Side.values)
+      side: FocusNode(debugLabel: 'Output ${side.name}'),
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    for (final MapEntry(key: side, value: node) in _focus.entries) {
+      node.addListener(() {
+        if (!node.hasFocus) _commit(side);
+      });
+    }
+  }
 
   @override
   void didUpdateWidget(OutputBar old) {
     super.didUpdateWidget(old);
-    if (old.outputSize != widget.outputSize) {
-      _width.text = '${widget.outputSize.width}';
-      _height.text = '${widget.outputSize.height}';
+    for (final side in Side.values) {
+      // An invalid field keeps its typed text until it's fixed, replaced or reverted.
+      if (widget.invalid.contains(side)) continue;
+      // A focused field may hold text that isn't applied yet; it only follows a new Output Size
+      // (or an error being cleared). Unfocused fields always show the value in use.
+      final resync =
+          !_focus[side]!.hasFocus ||
+          old.outputSize != widget.outputSize ||
+          old.invalid.contains(side);
+      final value = '${side.of(widget.outputSize)}';
+      if (resync && _text[side]!.text != value) _text[side]!.text = value;
     }
   }
 
   @override
   void dispose() {
-    _width.dispose();
-    _height.dispose();
-    _widthFocus.dispose();
-    _heightFocus.dispose();
+    for (final controller in _text.values) {
+      controller.dispose();
+    }
+    for (final node in _focus.values) {
+      node.dispose();
+    }
     super.dispose();
   }
+
+  /// Hands [side]'s typed text to the page, unless there's nothing new in it.
+  void _commit(Side side) {
+    final onSizeTyped = widget.onSizeTyped;
+    if (!mounted || onSizeTyped == null || !widget.enabled) return;
+    final text = _text[side]!.text;
+    final unchanged = text == '${side.of(widget.outputSize)}';
+    if (unchanged && !widget.invalid.contains(side)) return;
+    onSizeTyped(side, text);
+  }
+
+  /// Escape: back to the last valid value, clearing any error.
+  void _revert(Side side) {
+    final controller = _text[side]!;
+    final value = '${side.of(widget.outputSize)}';
+    controller.value = TextEditingValue(
+      text: value,
+      selection: .collapsed(offset: value.length),
+    );
+    widget.onSizeReverted?.call(side);
+  }
+
+  Widget _field(Side side) => _SizeField(
+    fieldKey: OutputBarKeys.field(side),
+    side: side,
+    controller: _text[side]!,
+    focusNode: _focus[side]!,
+    enabled: widget.enabled,
+    invalid: widget.invalid.contains(side),
+    editable: widget.onSizeTyped != null,
+    onCommit: () => _commit(side),
+    onRevert: () => _revert(side),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -130,29 +209,27 @@ class _OutputBarState extends State<OutputBar> {
               mainAxisSize: .min,
               spacing: 6,
               children: [
-                _SizeField(
-                  fieldKey: OutputBarKeys.width,
-                  prefix: 'W',
-                  controller: _width,
-                  focusNode: _widthFocus,
-                  enabled: enabled,
-                  onSubmitted: widget.onWidthSubmitted,
-                ),
+                _field(.width),
                 _LockButton(
                   locked: widget.locked,
                   onPressed: enabled
                       ? () => onLockChanged?.call(!widget.locked)
                       : null,
                 ),
-                _SizeField(
-                  fieldKey: OutputBarKeys.height,
-                  prefix: 'H',
-                  controller: _height,
-                  focusNode: _heightFocus,
-                  enabled: enabled,
-                  onSubmitted: widget.onHeightSubmitted,
-                ),
+                _field(.height),
                 Text('px', style: Dr.monoStyle(13)),
+                if (widget.invalid.isNotEmpty)
+                  Padding(
+                    padding: const .only(left: 4),
+                    child: Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        '$minSide–$maxSide px',
+                        key: OutputBarKeys.rangeHint,
+                        style: Dr.sansStyle(12, .w400, Dr.error),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -405,26 +482,37 @@ class _PresetsMenu extends StatelessWidget {
   }
 }
 
-/// A 92px `W [____]` / `H [____]` field. Without [onSubmitted] it is read-only.
+/// A 92px `W [____]` / `H [____]` field, outlined red while [invalid]. Read-only unless
+/// [editable]. Enter, focus loss and a click outside call [onCommit]; Escape calls [onRevert].
 class _SizeField extends StatelessWidget {
   const _SizeField({
     required this.fieldKey,
-    required this.prefix,
+    required this.side,
     required this.controller,
     required this.focusNode,
     required this.enabled,
-    required this.onSubmitted,
+    required this.invalid,
+    required this.editable,
+    required this.onCommit,
+    required this.onRevert,
   });
 
   final Key fieldKey;
-  final String prefix;
+  final Side side;
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool enabled;
-  final ValueChanged<String>? onSubmitted;
+  final bool invalid;
+  final bool editable;
+  final VoidCallback onCommit;
+  final VoidCallback onRevert;
 
   @override
   Widget build(BuildContext context) {
+    final (prefix, label) = switch (side) {
+      .width => ('W', 'Width'),
+      .height => ('H', 'Height'),
+    };
     return ListenableBuilder(
       listenable: focusNode,
       builder: (context, child) => Container(
@@ -434,27 +522,44 @@ class _SizeField extends StatelessWidget {
         decoration: BoxDecoration(
           color: Dr.background,
           borderRadius: .circular(7),
-          border: .all(
-            color: focusNode.hasFocus ? Dr.accent : Dr.controlLine,
-          ),
+          border: invalid
+              ? .all(color: Dr.error, width: 1.5)
+              : .all(color: focusNode.hasFocus ? Dr.accent : Dr.controlLine),
         ),
         child: child,
       ),
       child: Row(
         spacing: 6,
         children: [
-          Text(prefix, style: Dr.monoStyle(13)),
+          ExcludeSemantics(child: Text(prefix, style: Dr.monoStyle(13))),
           Expanded(
-            child: TextField(
-              key: fieldKey,
-              controller: controller,
-              focusNode: focusNode,
-              enabled: enabled,
-              readOnly: onSubmitted == null,
-              onSubmitted: onSubmitted,
-              keyboardType: TextInputType.number,
-              style: Dr.monoStyle(13, .w400, Dr.text),
-              decoration: const InputDecoration.collapsed(hintText: null),
+            child: Actions(
+              actions: {
+                DismissIntent: CallbackAction<DismissIntent>(
+                  onInvoke: (_) => editable ? onRevert() : null,
+                ),
+              },
+              child: Semantics(
+                label: label,
+                validationResult: invalid ? .invalid : .none,
+                child: TextField(
+                  key: fieldKey,
+                  controller: controller,
+                  focusNode: focusNode,
+                  enabled: enabled,
+                  readOnly: !editable,
+                  onSubmitted: editable ? (_) => onCommit() : null,
+                  // Apply as soon as a click elsewhere goes down, before that click lands, so
+                  // clicking Upscale upscales what was just typed.
+                  onTapOutside: (_) {
+                    onCommit();
+                    focusNode.unfocus();
+                  },
+                  keyboardType: TextInputType.number,
+                  style: Dr.monoStyle(13, .w400, Dr.text),
+                  decoration: const InputDecoration.collapsed(hintText: null),
+                ),
+              ),
             ),
           ),
         ],

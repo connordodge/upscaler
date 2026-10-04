@@ -9,6 +9,7 @@ import 'crop_picker.dart';
 import 'image_view.dart';
 import 'status_text.dart';
 import 'theme.dart';
+import 'upscale/size_editing.dart';
 import 'upscale/size_presets.dart';
 import 'upscale/upscale_options.dart';
 import 'upscale/upscaler.dart';
@@ -80,6 +81,10 @@ class _HomePageState extends State<HomePage> {
   late OutputSize _outputSize = widget.initialOutputSize;
   late Ratio _ratio = widget.initialRatio;
   late bool _ratioLocked = widget.initialRatioLocked;
+
+  /// Fields whose typed text was rejected. Nothing of it is applied; while any is invalid, Upscale
+  /// is disabled and the status bar asks for a fix.
+  Set<Side> _invalid = {};
   String? _input;
   PixelSize? _inputSize;
   double _cropPosition = 0.5;
@@ -154,14 +159,47 @@ class _HomePageState extends State<HomePage> {
         if (locked != null) _ratioLocked = locked;
       });
 
-  /// A ratio chip jumps to that ratio's largest Size Preset.
+  /// A ratio chip jumps to that ratio's largest Size Preset, replacing both fields.
   void _pickRatio(Ratio ratio) =>
-      _applyOutput(size: presetsFor(ratio).first.size, ratio: ratio);
+      _pickPreset(ratio, presetsFor(ratio).first.size);
 
-  void _pickPreset(Ratio ratio, OutputSize size) =>
-      _applyOutput(size: size, ratio: ratio);
+  void _pickPreset(Ratio ratio, OutputSize size) {
+    setState(() => _invalid = {});
+    _applyOutput(size: size, ratio: ratio);
+  }
+
+  /// Closing the lock in `Custom` keeps the exact current W:H; otherwise only the lock changes.
+  void _changeLock(bool locked) => _applyOutput(
+    locked: locked,
+    ratio: locked && !isPresetRatio(_ratio) ? reducedRatio(_outputSize) : null,
+  );
+
+  /// Applies text typed into [side], or marks the field invalid and applies nothing.
+  void _typeSize(Side side, String text) {
+    final edit = typedEdit(
+      size: _outputSize,
+      ratio: _ratio,
+      locked: _ratioLocked,
+      side: side,
+      text: text,
+    );
+    if (edit == null) {
+      setState(() => _invalid = {..._invalid, side});
+      return;
+    }
+    // A locked edit sets both sides, so it replaces the other field too.
+    setState(
+      () => _invalid = _ratioLocked ? {} : ({..._invalid}..remove(side)),
+    );
+    _applyOutput(size: edit.size, ratio: edit.ratio);
+  }
+
+  void _revertSize(Side side) =>
+      setState(() => _invalid = {..._invalid}..remove(side));
 
   Future<void> _upscale() async {
+    // The click that got here first applied any typed text; if that was invalid, don't start.
+    if (_invalid.isNotEmpty) return;
     setState(() {
       _running = true;
       _progress = 0;
@@ -206,6 +244,7 @@ class _HomePageState extends State<HomePage> {
     final output = _output;
     final error = _error;
     final showDone = output != null && _view == .preview && error == null;
+    final fixHint = fixSizeHint(_invalid);
 
     final ResultCard? card = switch ((error, output)) {
       (final error?, _) => ResultCard.error(
@@ -238,15 +277,21 @@ class _HomePageState extends State<HomePage> {
               onOpen: _running ? null : _pick,
               onModeChanged: _running ? null : _changeMode,
               onViewChanged: loaded ? (v) => setState(() => _view = v) : null,
-              onUpscale: loaded && !_running ? _upscale : null,
+              onUpscale: loaded && !_running && _invalid.isEmpty
+                  ? _upscale
+                  : null,
             ),
             OutputBar(
               outputSize: outputSize,
               ratio: _ratio,
               locked: _ratioLocked,
               enabled: !_running,
+              invalid: _invalid,
               onRatioPicked: _pickRatio,
               onPresetPicked: _pickPreset,
+              onLockChanged: _changeLock,
+              onSizeTyped: _typeSize,
+              onSizeReverted: _revertSize,
             ),
             Expanded(
               child: !loaded
@@ -299,7 +344,7 @@ class _HomePageState extends State<HomePage> {
             if (!loaded)
               StatusBar(
                 left: noImageStatus,
-                right: emptyStatusHint(outputSize),
+                right: fixHint ?? emptyStatusHint(outputSize),
               )
             else
               StatusBar(
@@ -309,15 +354,17 @@ class _HomePageState extends State<HomePage> {
                   outputSize: outputSize,
                   position: _cropPosition,
                 ),
-                right: statusHint(
-                  view: _view,
-                  needsCrop: needsCrop,
-                  running: _running,
-                  usesAi: usesAi,
-                  progress: _progress,
-                  done: output != null,
-                  failed: error != null,
-                ),
+                right:
+                    fixHint ??
+                    statusHint(
+                      view: _view,
+                      needsCrop: needsCrop,
+                      running: _running,
+                      usesAi: usesAi,
+                      progress: _progress,
+                      done: output != null,
+                      failed: error != null,
+                    ),
               ),
           ],
         ),
