@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:developer';
 import 'dart:io';
 
@@ -7,6 +8,7 @@ import 'package:flutter/material.dart';
 
 import 'crop_picker.dart';
 import 'image_view.dart';
+import 'output_settings.dart';
 import 'status_text.dart';
 import 'theme.dart';
 import 'upscale/size_editing.dart';
@@ -42,14 +44,13 @@ Future<String?> _pickWithDialog() async {
 void _reveal(String path) => Process.run('open', ['-R', path]);
 void _open(String path) => Process.run('open', [path]);
 
-/// The seams default to the real file dialog, `sips`/Real-ESRGAN pipeline and file decoding; widget
-/// tests swap them out.
+/// The seams default to the real file dialog, `sips`/Real-ESRGAN pipeline, file decoding and
+/// `shared_preferences`; widget tests swap them out.
 class HomePage extends StatefulWidget {
   const HomePage({
     super.key,
-    this.initialOutputSize = defaultOutputSize,
-    this.initialRatio = defaultRatio,
-    this.initialRatioLocked = true,
+    this.initialSettings = defaultOutputSettings,
+    this.settingsStore = const OutputSettingsStore(),
     this.pickImage = _pickWithDialog,
     this.readSize = Upscaler.readSize,
     this.upscale = Upscaler.upscale,
@@ -58,12 +59,10 @@ class HomePage extends StatefulWidget {
     this.openFile = _open,
   });
 
-  /// The Output Size, Aspect Ratio and Ratio Lock the page starts with. The page owns them from
-  /// then on. [initialRatio] is reduced and isn't derived from [initialOutputSize]: a locked edit
-  /// can round the size off its ratio.
-  final OutputSize initialOutputSize;
-  final Ratio initialRatio;
-  final bool initialRatioLocked;
+  /// The Output Size, Aspect Ratio and Ratio Lock the page starts with, as loaded from
+  /// [settingsStore]. The page owns them from then on and saves every applied change.
+  final OutputSettings initialSettings;
+  final OutputSettingsStore settingsStore;
   final PickImage pickImage;
   final ReadSize readSize;
   final RunUpscale upscale;
@@ -78,9 +77,12 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   /// Every saved image is exactly this; the crop, preview, copy and upscale all read it from here.
   /// It, [_ratio] and [_ratioLocked] only change through [_applyOutput].
-  late OutputSize _outputSize = widget.initialOutputSize;
-  late Ratio _ratio = widget.initialRatio;
-  late bool _ratioLocked = widget.initialRatioLocked;
+  late OutputSize _outputSize = widget.initialSettings.size;
+  late Ratio _ratio = widget.initialSettings.ratio;
+  late bool _ratioLocked = widget.initialSettings.locked;
+
+  OutputSettings get _settings =>
+      (size: _outputSize, ratio: _ratio, locked: _ratioLocked);
 
   /// Fields whose typed text was rejected. Nothing of it is applied; while any is invalid, Upscale
   /// is disabled and the status bar asks for a fix.
@@ -146,18 +148,30 @@ class _HomePageState extends State<HomePage> {
   });
 
   /// The one path for Output Size, Aspect Ratio and Ratio Lock changes. A new Output Size reshapes
-  /// the crop, so it recenters and any result or error goes stale.
-  void _applyOutput({OutputSize? size, Ratio? ratio, bool? locked}) =>
-      setState(() {
-        if (size != null && size != _outputSize) {
-          _outputSize = size;
-          _cropPosition = 0.5;
-          _output = null;
-          _error = null;
-        }
-        if (ratio != null) _ratio = ratio;
-        if (locked != null) _ratioLocked = locked;
-      });
+  /// the crop, so it recenters and any result or error goes stale. Anything that changed is saved.
+  void _applyOutput({OutputSize? size, Ratio? ratio, bool? locked}) {
+    final before = _settings;
+    setState(() {
+      if (size != null && size != _outputSize) {
+        _outputSize = size;
+        _cropPosition = 0.5;
+        _output = null;
+        _error = null;
+      }
+      if (ratio != null) _ratio = ratio;
+      if (locked != null) _ratioLocked = locked;
+    });
+    if (_settings != before) unawaited(_save(_settings));
+  }
+
+  /// A failed save only costs the settings next launch, so it's logged and the app carries on.
+  Future<void> _save(OutputSettings settings) async {
+    try {
+      await widget.settingsStore.save(settings);
+    } catch (e, st) {
+      log('Failed to save the Output settings', error: e, stackTrace: st);
+    }
+  }
 
   /// A ratio chip jumps to that ratio's largest Size Preset, replacing both fields.
   void _pickRatio(Ratio ratio) =>

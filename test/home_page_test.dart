@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:upscaler/crop_picker.dart';
 import 'package:upscaler/home_page.dart';
+import 'package:upscaler/output_settings.dart';
 import 'package:upscaler/theme.dart';
 import 'package:upscaler/upscale/size_presets.dart';
 import 'package:upscaler/upscale/upscale_options.dart';
@@ -57,6 +58,29 @@ class _FakeUpscale {
   void fail(Object error) => _done.completeError(error);
 }
 
+/// An in-memory [OutputSettingsStore] that records every save, so no test touches the real
+/// `shared_preferences` on disk. [fail] makes saves throw, synchronously or from the future.
+class _FakeStore implements OutputSettingsStore {
+  _FakeStore({this.fail});
+
+  final ({bool sync})? fail;
+  final saved = <OutputSettings>[];
+
+  @override
+  Future<OutputSettings> load() async =>
+      saved.lastOrNull ?? defaultOutputSettings;
+
+  @override
+  Future<void> save(OutputSettings settings) {
+    saved.add(settings);
+    return switch (fail) {
+      null => Future.value(),
+      (sync: true) => throw StateError('disk full'),
+      (sync: false) => Future.error(StateError('disk full')),
+    };
+  }
+}
+
 /// [size]'s exact W:H, as HomePage would hold it.
 Ratio _reduced(OutputSize size) {
   final d = size.width.gcd(size.height);
@@ -70,6 +94,7 @@ Future<void> _pump(
   OutputSize outputSize = defaultOutputSize,
   Ratio? ratio,
   bool locked = true,
+  OutputSettingsStore? store,
   RunUpscale? upscale,
   void Function(String)? reveal,
   void Function(String)? open,
@@ -83,9 +108,12 @@ Future<void> _pump(
     MaterialApp(
       theme: darkroomTheme,
       home: HomePage(
-        initialOutputSize: outputSize,
-        initialRatio: ratio ?? _reduced(outputSize),
-        initialRatioLocked: locked,
+        initialSettings: (
+          size: outputSize,
+          ratio: ratio ?? _reduced(outputSize),
+          locked: locked,
+        ),
+        settingsStore: store ?? _FakeStore(),
         pickImage: () async => picked,
         readSize: (_) async => size,
         upscale: upscale ?? _FakeUpscale().call,
@@ -1740,5 +1768,163 @@ void main() {
       await tester.pump();
       await tester.pump();
     });
+  });
+
+  group('saved Output settings', () {
+    String field(WidgetTester tester, Key key) =>
+        tester.widget<TextField>(find.byKey(key)).controller!.text;
+
+    bool flag(WidgetTester tester, Key key, {required bool toggled}) {
+      final flags = tester
+          .getSemantics(find.byKey(key))
+          .getSemanticsData()
+          .flagsCollection;
+      return (toggled ? flags.isToggled : flags.isSelected) == .isTrue;
+    }
+
+    Future<void> submit(WidgetTester tester, Key key, String text) async {
+      await tester.enterText(find.byKey(key), text);
+      await tester.testTextInput.receiveAction(.done);
+      await tester.pump();
+    }
+
+    for (final (size, ratio, chip) in [
+      ((width: 1000, height: 1400), (w: 5, h: 7), OutputBarKeys.custom),
+      (_portrait, (w: 2, h: 3), OutputBarKeys.ratio((w: 2, h: 3))),
+    ]) {
+      final (:width, :height) = size;
+      testWidgets('launch with saved unlocked $width × $height', (
+        tester,
+      ) async {
+        await _pump(tester, outputSize: size, ratio: ratio, locked: false);
+
+        expect(field(tester, OutputBarKeys.width), '$width');
+        expect(field(tester, OutputBarKeys.height), '$height');
+        expect(flag(tester, chip, toggled: false), isTrue);
+        expect(
+          flag(tester, OutputBarKeys.ratio(defaultRatio), toggled: false),
+          isFalse,
+        );
+        expect(flag(tester, OutputBarKeys.lock, toggled: true), isFalse);
+        expect(_right(tester), 'Output $width×$height');
+
+        await _openImage(tester);
+        expect(_left(tester), contains('→  $width×$height'));
+        await tester.tap(find.text('Preview'));
+        await tester.pump();
+        expect(find.text('Output · $width × $height'), findsOneWidget);
+      });
+    }
+
+    testWidgets('every applied chip, preset, typed and lock change is saved', (
+      tester,
+    ) async {
+      final store = _FakeStore();
+      await _pump(tester, store: store);
+      expect(store.saved, isEmpty);
+
+      await tester.tap(find.byKey(OutputBarKeys.ratio((w: 4, h: 5))));
+      await tester.pump();
+      expect(store.saved.last, (
+        size: (width: 3072, height: 3840),
+        ratio: (w: 4, h: 5),
+        locked: true,
+      ));
+
+      await tester.tap(find.byKey(OutputBarKeys.presets));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(OutputBarKeys.preset((width: 1080, height: 1350))),
+      );
+      await tester.pumpAndSettle();
+      expect(store.saved.last, (
+        size: (width: 1080, height: 1350),
+        ratio: (w: 4, h: 5),
+        locked: true,
+      ));
+
+      // Locked: the height follows the ratio.
+      await submit(tester, OutputBarKeys.width, '2000');
+      expect(store.saved.last, (
+        size: (width: 2000, height: 2500),
+        ratio: (w: 4, h: 5),
+        locked: true,
+      ));
+
+      await tester.tap(find.byKey(OutputBarKeys.lock));
+      await tester.pump();
+      expect(store.saved.last, (
+        size: (width: 2000, height: 2500),
+        ratio: (w: 4, h: 5),
+        locked: false,
+      ));
+
+      // Unlocked: the ratio becomes the new W:H.
+      await submit(tester, OutputBarKeys.height, '2800');
+      expect(store.saved.last, (
+        size: (width: 2000, height: 2800),
+        ratio: (w: 5, h: 7),
+        locked: false,
+      ));
+
+      await tester.tap(find.byKey(OutputBarKeys.lock));
+      await tester.pump();
+      expect(store.saved.last, (
+        size: (width: 2000, height: 2800),
+        ratio: (w: 5, h: 7),
+        locked: true,
+      ));
+      expect(store.saved, hasLength(6));
+    });
+
+    testWidgets('invalid typed values and unchanged settings aren\'t saved', (
+      tester,
+    ) async {
+      final store = _FakeStore();
+      await _pump(tester, store: store);
+
+      for (final text in ['abc', '100', '9000', '2.5']) {
+        await submit(tester, OutputBarKeys.height, text);
+      }
+      // Locked 16:9, W 256 would need H 144.
+      await submit(tester, OutputBarKeys.width, '256');
+      expect(_right(tester), 'Fix the width to upscale');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      // Re-entering the current value and re-picking the selected chip change nothing.
+      await submit(tester, OutputBarKeys.width, '3840');
+      await tester.tap(find.byKey(OutputBarKeys.ratio(defaultRatio)));
+      await tester.pump();
+
+      expect(store.saved, isEmpty);
+    });
+
+    for (final sync in [true, false]) {
+      testWidgets('a save that fails ${sync ? 'by throwing' : 'later'} is '
+          'logged and the app carries on', (tester) async {
+        final store = _FakeStore(fail: (sync: sync));
+        final upscale = _FakeUpscale();
+        await _pump(tester, store: store, upscale: upscale.call);
+        await _openImage(tester);
+
+        await tester.tap(find.byKey(OutputBarKeys.ratio((w: 1, h: 1))));
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(_left(tester), contains('→  3840×3840'));
+
+        await submit(tester, OutputBarKeys.width, '2160');
+        expect(tester.takeException(), isNull);
+        expect(store.saved, hasLength(2));
+        expect(field(tester, OutputBarKeys.height), '2160');
+
+        await tester.tap(find.text('Upscale'));
+        await tester.pump();
+        expect(upscale.outputSize, (width: 2160, height: 2160));
+        upscale.finish();
+        await tester.pump();
+        await tester.pump();
+        expect(find.text('Saved temple-garden_2160x2160.jpg'), findsOneWidget);
+      });
+    }
   });
 }
