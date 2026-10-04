@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme.dart';
 
 /// Disabled controls sit at this opacity.
-const _disabledOpacity = 0.45;
+const disabledOpacity = 0.45;
 
 enum DrButtonKind { primary, secondary }
 
@@ -71,7 +71,7 @@ class DrButton extends StatelessWidget {
       ),
     );
     return !primary && !enabled
-        ? Opacity(opacity: _disabledOpacity, child: button)
+        ? Opacity(opacity: disabledOpacity, child: button)
         : button;
   }
 }
@@ -126,7 +126,7 @@ class SegmentedControl<T> extends StatelessWidget {
       container: true,
       label: label,
       child: onChanged == null
-          ? Opacity(opacity: _disabledOpacity, child: track)
+          ? Opacity(opacity: disabledOpacity, child: track)
           : track,
     );
   }

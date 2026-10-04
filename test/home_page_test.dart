@@ -1,12 +1,18 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:upscaler/crop_picker.dart';
 import 'package:upscaler/home_page.dart';
 import 'package:upscaler/theme.dart';
+import 'package:upscaler/upscale/size_presets.dart';
 import 'package:upscaler/upscale/upscale_options.dart';
 import 'package:upscaler/upscale/upscaler.dart';
+import 'package:upscaler/widgets/output_bar.dart';
 import 'package:upscaler/widgets/stage_parts.dart';
 import 'package:upscaler/widgets/toolbar.dart';
 
@@ -51,17 +57,26 @@ class _FakeUpscale {
   void fail(Object error) => _done.completeError(error);
 }
 
+/// [size]'s exact W:H, as HomePage would hold it.
+Ratio _reduced(OutputSize size) {
+  final d = size.width.gcd(size.height);
+  return (w: size.width ~/ d, h: size.height ~/ d);
+}
+
 Future<void> _pump(
   WidgetTester tester, {
   String? picked = _sample,
   PixelSize size = _sampleSize,
   OutputSize outputSize = defaultOutputSize,
+  Ratio? ratio,
+  bool locked = true,
   RunUpscale? upscale,
   void Function(String)? reveal,
   void Function(String)? open,
+  double width = 960,
 }) async {
   tester.view
-    ..physicalSize = const Size(960, 820)
+    ..physicalSize = Size(width, 820)
     ..devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
@@ -69,6 +84,8 @@ Future<void> _pump(
       theme: darkroomTheme,
       home: HomePage(
         initialOutputSize: outputSize,
+        initialRatio: ratio ?? _reduced(outputSize),
+        initialRatioLocked: locked,
         pickImage: () async => picked,
         readSize: (_) async => size,
         upscale: upscale ?? _FakeUpscale().call,
@@ -636,6 +653,529 @@ void main() {
       expect(find.textContaining('boom'), findsOneWidget);
       expect(_right(tester), 'Failed');
       expect(_enabled(tester, 'Upscale'), isTrue);
+    });
+  });
+
+  group('Output bar', () {
+    const fourByFive = (w: 4, h: 5);
+    const custom = (width: 2400, height: 2900);
+
+    String field(WidgetTester tester, Key key) =>
+        tester.widget<TextField>(find.byKey(key)).controller!.text;
+
+    SemanticsNode semantics(WidgetTester tester, Key key) =>
+        tester.getSemantics(find.byKey(key));
+
+    bool keySelected(WidgetTester tester, Key key) =>
+        semantics(tester, key).getSemanticsData().flagsCollection.isSelected ==
+        .isTrue;
+
+    bool selected(WidgetTester tester, Ratio ratio) =>
+        keySelected(tester, OutputBarKeys.ratio(ratio));
+
+    bool lockClosed(WidgetTester tester) =>
+        semantics(
+          tester,
+          OutputBarKeys.lock,
+        ).getSemanticsData().flagsCollection.isToggled ==
+        .isTrue;
+
+    CropWindowPainter cropWindow(WidgetTester tester) =>
+        tester
+                .widget<CustomPaint>(find.byKey(const ValueKey('crop-overlay')))
+                .painter!
+            as CropWindowPainter;
+
+    Future<void> openPresets(WidgetTester tester) async {
+      await tester.tap(find.byKey(OutputBarKeys.presets));
+      await tester.pumpAndSettle();
+    }
+
+    /// Labels of the open Presets menu, group headers included, top to bottom.
+    List<String> menuLabels(WidgetTester tester) {
+      final menu = find.ancestor(
+        of: find.byType(MenuItemButton).first,
+        matching: find.byType(SingleChildScrollView),
+      );
+      return [
+        for (final text in tester.widgetList<Text>(
+          find.descendant(of: menu.first, matching: find.byType(Text)),
+        ))
+          text.data!,
+      ];
+    }
+
+    testWidgets('sits under the toolbar showing the default Output Size', (
+      tester,
+    ) async {
+      await _pump(tester);
+
+      final bar = find.byKey(OutputBarKeys.bar);
+      expect(
+        tester.getRect(bar).top,
+        tester.getRect(find.byType(Toolbar)).bottom,
+      );
+      expect(tester.getSize(bar), const Size(960, 52));
+      final box = tester.widget<Container>(bar).decoration! as BoxDecoration;
+      expect(box.color, const Color(0xFF141417));
+      expect(
+        box.border,
+        const Border(bottom: BorderSide(color: Color(0xFF2A2A2F))),
+      );
+
+      for (final label in [
+        'OUTPUT',
+        ...['16:9', '3:2', '4:3', '1:1', '4:5', '2:3', '9:16'],
+        'Presets',
+        'W',
+        'H',
+        'px',
+      ]) {
+        expect(
+          find.descendant(of: bar, matching: find.text(label)),
+          findsOneWidget,
+          reason: label,
+        );
+      }
+      expect(find.byKey(OutputBarKeys.custom), findsNothing);
+      expect(selected(tester, defaultRatio), isTrue);
+      expect(selected(tester, fourByFive), isFalse);
+      expect(field(tester, OutputBarKeys.width), '3840');
+      expect(field(tester, OutputBarKeys.height), '2160');
+      expect(lockClosed(tester), isTrue);
+      expect(find.byKey(OutputBarKeys.lock), findsOneWidget);
+    });
+
+    testWidgets('a ratio chip picks its largest preset and keeps the lock', (
+      tester,
+    ) async {
+      await _pump(tester, locked: false);
+      expect(_right(tester), 'Output 3840×2160');
+      await _openImage(tester);
+
+      await tester.tap(find.byKey(OutputBarKeys.ratio(fourByFive)));
+      await tester.pump();
+
+      expect(selected(tester, fourByFive), isTrue);
+      expect(selected(tester, defaultRatio), isFalse);
+      expect(field(tester, OutputBarKeys.width), '3072');
+      expect(field(tester, OutputBarKeys.height), '3840');
+      expect(
+        _left(tester),
+        'temple-garden.jpg  2048×1536  →  3072×3840  ·  crop x 1024',
+      );
+      expect(lockClosed(tester), isFalse);
+
+      await tester.tap(find.text('Preview'));
+      await tester.pump();
+      expect(find.text('Output · 3072 × 3840'), findsOneWidget);
+    });
+
+    testWidgets('a ratio chip keeps a closed lock closed', (tester) async {
+      await _pump(tester);
+      await tester.tap(find.byKey(OutputBarKeys.ratio((w: 9, h: 16))));
+      await tester.pump();
+      expect(_right(tester), 'Output 2160×3840');
+      expect(lockClosed(tester), isTrue);
+    });
+
+    testWidgets('Presets lists the selected ratio\'s presets', (tester) async {
+      await _pump(tester);
+
+      await openPresets(tester);
+      expect(menuLabels(tester), [
+        '3840 × 2160 · Frame TV 4K',
+        '2560 × 1440',
+        '1920 × 1080',
+      ]);
+      await tester.tap(
+        find.byKey(OutputBarKeys.preset((width: 2560, height: 1440))),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(MenuItemButton), findsNothing);
+      expect(field(tester, OutputBarKeys.width), '2560');
+      expect(field(tester, OutputBarKeys.height), '1440');
+      expect(_right(tester), 'Output 2560×1440');
+      expect(selected(tester, defaultRatio), isTrue);
+
+      await tester.tap(find.byKey(OutputBarKeys.ratio((w: 3, h: 2))));
+      await tester.pump();
+      await openPresets(tester);
+      expect(menuLabels(tester), [
+        '3840 × 2560',
+        '2880 × 1920',
+        '1920 × 1280',
+      ]);
+      await tester.tap(
+        find.byKey(OutputBarKeys.preset((width: 1920, height: 1280))),
+      );
+      await tester.pumpAndSettle();
+
+      expect(_right(tester), 'Output 1920×1280');
+      expect(selected(tester, (w: 3, h: 2)), isTrue);
+    });
+
+    testWidgets('a Custom ratio shows Custom and every preset by ratio', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        outputSize: custom,
+        ratio: (w: 24, h: 29),
+        locked: false,
+      );
+
+      expect(find.byKey(OutputBarKeys.custom), findsOneWidget);
+      expect(keySelected(tester, OutputBarKeys.custom), isTrue);
+      for (final (:ratio, presets: _) in presetGroups) {
+        expect(selected(tester, ratio), isFalse, reason: ratioLabel(ratio));
+      }
+      expect(field(tester, OutputBarKeys.width), '2400');
+      expect(field(tester, OutputBarKeys.height), '2900');
+
+      await openPresets(tester);
+      expect(menuLabels(tester), [
+        for (final (:ratio, :presets) in presetGroups) ...[
+          ratioLabel(ratio),
+          ...presets.map(presetLabel),
+        ],
+      ]);
+      expect(
+        menuLabels(tester).take(4),
+        ['16:9', '3840 × 2160 · Frame TV 4K', '2560 × 1440', '1920 × 1080'],
+      );
+      for (final (:ratio, presets: _) in presetGroups) {
+        expect(find.byKey(OutputBarKeys.presetGroup(ratio)), findsOneWidget);
+      }
+
+      await tester.ensureVisible(
+        find.byKey(OutputBarKeys.preset((width: 1080, height: 1350))),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(OutputBarKeys.preset((width: 1080, height: 1350))),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(OutputBarKeys.custom), findsNothing);
+      expect(selected(tester, fourByFive), isTrue);
+      expect(_right(tester), 'Output 1080×1350');
+    });
+
+    testWidgets('a new Output Size reshapes and recenters the crop, '
+        'clearing Done', (tester) async {
+      final upscale = _FakeUpscale();
+      await _pump(tester, upscale: upscale.call);
+      await _openImage(tester);
+      await tester.drag(
+        find.byKey(const ValueKey('crop-overlay')),
+        const Offset(0, -40),
+      );
+      await tester.pump();
+      expect(_left(tester), isNot(endsWith('crop y 360')));
+      await tester.tap(find.text('Upscale'));
+      await tester.pump();
+      upscale.finish();
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Saved temple-garden_3840x2160.jpg'), findsOneWidget);
+
+      await tester.tap(find.byKey(OutputBarKeys.ratio((w: 1, h: 1))));
+      await tester.pump();
+
+      expect(find.textContaining('Saved'), findsNothing);
+      expect(find.byKey(_img(_output)), findsNothing);
+      expect(find.text('Output · 3840 × 3840'), findsOneWidget);
+      expect(_right(tester), 'Switch to Crop to adjust');
+
+      await tester.tap(find.text('Crop'));
+      await tester.pump();
+      // 2048 × 1536 covers 3840 × 3840 as 5120 × 3840: a 3/4-wide window, centered.
+      final window = cropWindow(tester);
+      expect(window.horizontal, isTrue);
+      expect(window.windowFraction, 0.75);
+      expect(window.position, 0.5);
+      expect(
+        _left(tester),
+        'temple-garden.jpg  2048×1536  →  3840×3840  ·  crop x 640',
+      );
+    });
+
+    testWidgets('a new Output Size clears the error card', (tester) async {
+      final upscale = _FakeUpscale();
+      await _pump(tester, upscale: upscale.call);
+      await _openImage(tester);
+      await tester.tap(find.text('Upscale'));
+      await tester.pump();
+      upscale.fail(StateError('boom'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Upscale failed'), findsOneWidget);
+
+      await openPresets(tester);
+      await tester.tap(
+        find.byKey(OutputBarKeys.preset((width: 1920, height: 1080))),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Upscale failed'), findsNothing);
+      expect(_right(tester), 'Drag frame to reposition');
+      expect(
+        _left(tester),
+        'temple-garden.jpg  2048×1536  →  1920×1080  ·  crop y 180',
+      );
+    });
+
+    testWidgets('re-picking the current size keeps Done', (tester) async {
+      final upscale = _FakeUpscale();
+      await _pump(tester, upscale: upscale.call);
+      await _openImage(tester);
+      await tester.tap(find.text('Upscale'));
+      await tester.pump();
+      upscale.finish();
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.byKey(OutputBarKeys.ratio(defaultRatio)));
+      await tester.pump();
+
+      expect(find.text('Saved temple-garden_3840x2160.jpg'), findsOneWidget);
+    });
+
+    testWidgets('every control is disabled while upscaling', (tester) async {
+      final upscale = _FakeUpscale();
+      await _pump(tester, upscale: upscale.call);
+      await _openImage(tester);
+      await tester.tap(find.text('Upscale'));
+      await tester.pump();
+
+      InkWell inkWell(Key key) => tester.widget<InkWell>(
+        find.descendant(of: find.byKey(key), matching: find.byType(InkWell)),
+      );
+      for (final (:ratio, presets: _) in presetGroups) {
+        expect(
+          inkWell(OutputBarKeys.ratio(ratio)).onTap,
+          isNull,
+          reason: ratioLabel(ratio),
+        );
+      }
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(OutputBarKeys.presets))
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester.widget<TextField>(find.byKey(OutputBarKeys.width)).enabled,
+        isFalse,
+      );
+      expect(
+        tester.widget<TextField>(find.byKey(OutputBarKeys.height)).enabled,
+        isFalse,
+      );
+      expect(inkWell(OutputBarKeys.lock).onTap, isNull);
+
+      // Taps do nothing.
+      await tester.tap(
+        find.byKey(OutputBarKeys.ratio(fourByFive)),
+        warnIfMissed: false,
+      );
+      await tester.tap(find.byKey(OutputBarKeys.presets), warnIfMissed: false);
+      await tester.pumpAndSettle();
+      expect(find.byType(MenuItemButton), findsNothing);
+      expect(selected(tester, defaultRatio), isTrue);
+
+      upscale.finish();
+      await tester.pump();
+      await tester.pump();
+      expect(inkWell(OutputBarKeys.ratio(fourByFive)).onTap, isNotNull);
+      expect(
+        tester.widget<TextField>(find.byKey(OutputBarKeys.width)).enabled,
+        isTrue,
+      );
+    });
+
+    testWidgets('upscales to a picked non-16:9 preset', (tester) async {
+      final upscale = _FakeUpscale();
+      await _pump(tester, upscale: upscale.call);
+      await _openImage(tester);
+      await tester.tap(find.byKey(OutputBarKeys.ratio((w: 4, h: 3))));
+      await tester.pump();
+      await openPresets(tester);
+      await tester.tap(
+        find.byKey(OutputBarKeys.preset((width: 2880, height: 2160))),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Upscale'));
+      await tester.pump();
+      expect(upscale.outputSize, (width: 2880, height: 2160));
+
+      upscale.finish();
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Saved temple-garden_2880x2160.jpg'), findsOneWidget);
+    });
+
+    testWidgets('chips expose selected state', (tester) async {
+      final handle = tester.ensureSemantics();
+      await _pump(tester);
+
+      expect(
+        semantics(tester, OutputBarKeys.ratio(defaultRatio)),
+        isSemantics(label: '16:9', isButton: true, isSelected: true),
+      );
+      expect(
+        semantics(tester, OutputBarKeys.ratio(fourByFive)),
+        isSemantics(label: '4:5', isButton: true, isSelected: false),
+      );
+      handle.dispose();
+    });
+
+    testWidgets('Tab runs chips → Presets → W → lock → H', (tester) async {
+      await _pump(tester);
+      await _openImage(tester);
+
+      final keys = [
+        for (final (:ratio, presets: _) in presetGroups)
+          OutputBarKeys.ratio(ratio),
+        OutputBarKeys.presets,
+        OutputBarKeys.width,
+        OutputBarKeys.lock,
+        OutputBarKeys.height,
+      ];
+      Key? focused() {
+        Key? found;
+        final context = FocusManager.instance.primaryFocus?.context;
+        if (context == null) return null;
+        if (keys.contains(context.widget.key)) return context.widget.key;
+        context.visitAncestorElements((e) {
+          if (keys.contains(e.widget.key)) found = e.widget.key;
+          return found == null;
+        });
+        return found;
+      }
+
+      // Tab through the toolbar to the first chip.
+      for (var i = 0; i < 20 && focused() != keys.first; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+      }
+      final order = [focused()];
+      for (var i = 1; i < keys.length; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        order.add(focused());
+      }
+      expect(order, keys);
+    });
+  });
+
+  testWidgets('OutputBar disposes its controllers and focus nodes', (
+    tester,
+  ) async {
+    final created = <Object>{};
+    final disposed = <Object>{};
+    void track(ObjectEvent event) {
+      final object = event.object;
+      if (object is! TextEditingController && object is! FocusNode) return;
+      switch (event) {
+        case ObjectCreated():
+          created.add(object);
+        case ObjectDisposed():
+          disposed.add(object);
+        default:
+      }
+    }
+
+    FlutterMemoryAllocations.instance.addListener(track);
+    addTearDown(() => FlutterMemoryAllocations.instance.removeListener(track));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Material(
+          child: OutputBar(
+            outputSize: defaultOutputSize,
+            ratio: defaultRatio,
+            locked: true,
+            enabled: true,
+            onRatioPicked: (_) {},
+            onPresetPicked: (_, _) {},
+          ),
+        ),
+      ),
+    );
+    final fields = find.descendant(
+      of: find.byType(OutputBar),
+      matching: find.byType(TextField),
+    );
+    final owned = [
+      for (final field in tester.widgetList<TextField>(fields)) ...[
+        field.controller!,
+        field.focusNode!,
+      ],
+    ];
+    expect(owned, hasLength(4));
+    expect(created, containsAll(owned));
+
+    await tester.pumpWidget(const SizedBox());
+
+    expect(disposed, containsAll(owned));
+  });
+
+  group('minimum window width', () {
+    final swift = File(
+      'macos/Runner/MainFlutterWindow.swift',
+    ).readAsStringSync();
+    final match = RegExp(
+      r'contentMinSize = NSSize\(width: (\d+), height: (\d+)\)',
+    ).firstMatch(swift)!;
+    final minWidth = double.parse(match[1]!);
+
+    test('is at least 800 × 720', () {
+      expect(minWidth, greaterThanOrEqualTo(800));
+      expect(match[2], '720');
+    });
+
+    testWidgets('fits the Output bar with the Custom chip on one row', (
+      tester,
+    ) async {
+      final upscale = _FakeUpscale();
+      await _pump(
+        tester,
+        outputSize: (width: 8192, height: 8191),
+        ratio: (w: 8192, h: 8191),
+        locked: false,
+        upscale: upscale.call,
+        width: minWidth,
+      );
+      await _openImage(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(OutputBarKeys.custom), findsOneWidget);
+      final bar = tester.getRect(find.byKey(OutputBarKeys.bar));
+      expect(bar.height, 52);
+      // The last control's right edge plus the bar's 16px end padding.
+      final needed =
+          tester
+              .getRect(
+                find.descendant(
+                  of: find.byKey(OutputBarKeys.bar),
+                  matching: find.text('px'),
+                ),
+              )
+              .right +
+          16;
+      expect(needed, lessThanOrEqualTo(minWidth));
+
+      // Working doesn't change the layout.
+      await tester.tap(find.text('Upscale'));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      upscale.finish();
+      await tester.pump();
+      await tester.pump();
     });
   });
 }
