@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Upscaler — Empty</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0B0B0D}
+a{color:#A88BFF}a:hover{color:#C7B4FF}
+</style>
+</helmet>
+<div style="height: 100vh; box-sizing: border-box; background: #0B0B0D; color: #ECECEF; font-family: 'Hanken Grotesk', -apple-system, system-ui, sans-serif; display: flex; flex-direction: column">
+  <header style="flex: none; min-height: 60px; box-sizing: border-box; padding: 8px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; background: #18181B; border-bottom: 1px solid #2A2A2F">
+    <div style="display: flex; align-items: center; gap: 12px">
+      <img src="/_blob/8d2db483b3b12fd465b9202ea4482aec" alt="Upscaler" style="width: 28px; height: 28px; display: block">
+      <button type="button" style="display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px; border-radius: 8px; border: 1px solid #34343A; background: #222226; color: #ECECEF; font-family: inherit; font-size: 14px; font-weight: 500; cursor: pointer">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+        Open…
+      </button>
+    </div>
+    <div role="group" aria-label="Upscale method" style="display: flex; padding: 3px; gap: 2px; border-radius: 10px; background: #222226; border: 1px solid #34343A">
+      <button type="button" aria-pressed="true" style="height: 38px; padding: 0 14px; border: 0; border-radius: 7px; background: #3A3A42; color: #FFFFFF; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer">AI · Photo</button>
+      <button type="button" style="height: 38px; padding: 0 14px; border: 0; border-radius: 7px; background: transparent; color: #B4B4BC; font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer">AI · Illustration</button>
+      <button type="button" style="height: 38px; padding: 0 14px; border: 0; border-radius: 7px; background: transparent; color: #B4B4BC; font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer">Plain</button>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px">
+      <div role="group" aria-label="View" style="display: flex; padding: 3px; gap: 2px; border-radius: 10px; background: #222226; border: 1px solid #34343A; opacity: 0.45">
+        <button type="button" disabled style="display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px; border: 0; border-radius: 7px; background: #3A3A42; color: #FFFFFF; font-family: inherit; font-size: 13px; font-weight: 600">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2v14a2 2 0 0 0 2 2h14"></path><path d="M18 22V8a2 2 0 0 0-2-2H2"></path></svg>
+          Crop
+        </button>
+        <button type="button" disabled style="display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: #B4B4BC; font-family: inherit; font-size: 13px; font-weight: 500">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="1.5"></rect><path d="M8 21h8M12 17v4"></path></svg>
+          Preview
+        </button>
+      </div>
+      <button type="button" disabled style="display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 18px; border-radius: 8px; border: 0; background: #2A2A2F; color: #6B6B74; font-family: inherit; font-size: 14px; font-weight: 600">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"></path><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"></path></svg>
+        Make 4K Art
+      </button>
+    </div>
+  </header>
+
+  <main style="flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 32px; box-sizing: border-box">
+    <div style="width: min(100%, 720px); aspect-ratio: 16 / 9; box-sizing: border-box; border: 1.5px dashed #3A3A42; border-radius: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#6B6B74" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="9" cy="10" r="1.6"></circle><path d="M21 16l-5-5-9 9"></path></svg>
+      <h1 style="margin: 0; font-size: 22px; font-weight: 600">Drop an image to start</h1>
+      <p style="margin: 0; font-size: 14px; color: #9A9AA3; max-width: 380px; text-wrap: pretty">PNG, JPEG or WebP. It becomes exact 3840 × 2160 art for your Samsung Frame TV.</p>
+      <button type="button" style="display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 18px; margin-top: 6px; border-radius: 8px; border: 0; background: {{accent}}; color: #FFFFFF; font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+        Choose Image…
+      </button>
+    </div>
+  </main>
+
+  <footer style="flex: none; min-height: 36px; box-sizing: border-box; padding: 8px 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; background: #18181B; border-top: 1px solid #2A2A2F; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: #9A9AA3">
+    <span>No image</span>
+    <span>Output 3840×2160</span>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#6E3FF3","options":["#6E3FF3","#2F6FEB","#C2410C"]},"$preview":{"width":960,"height":820}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { accent: this.props.accent ?? '#6E3FF3' };
+  }
+}
+</script>
+</body>
+</html>
