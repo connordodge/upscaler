@@ -1,5 +1,5 @@
 name: upscaler
-description: "Upscale images to exact 3840x2160 Samsung Frame TV art."
+description: "Upscale images to an exact Output Size."
 publish_to: 'none'
 version: 0.2.0+2
 

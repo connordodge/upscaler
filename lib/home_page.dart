@@ -21,6 +21,7 @@ typedef ReadSize = Future<PixelSize> Function(String path);
 typedef RunUpscale = Future<String> Function({
   required String input,
   required PixelSize size,
+  required OutputSize outputSize,
   required UpscaleMode mode,
   required double cropPosition,
   required void Function(double? progress) onProgress,
@@ -43,6 +44,7 @@ void _open(String path) => Process.run('open', [path]);
 class HomePage extends StatefulWidget {
   const HomePage({
     super.key,
+    this.initialOutputSize = defaultOutputSize,
     this.pickImage = _pickWithDialog,
     this.readSize = Upscaler.readSize,
     this.upscale = Upscaler.upscale,
@@ -51,6 +53,8 @@ class HomePage extends StatefulWidget {
     this.openFile = _open,
   });
 
+  /// The Output Size the page starts with. The page owns it from then on.
+  final OutputSize initialOutputSize;
   final PickImage pickImage;
   final ReadSize readSize;
   final RunUpscale upscale;
@@ -63,6 +67,8 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  /// Every saved image is exactly this; the crop, preview, copy and upscale all read it from here.
+  late final OutputSize _outputSize = widget.initialOutputSize;
   String? _input;
   PixelSize? _inputSize;
   double _cropPosition = 0.5;
@@ -134,6 +140,7 @@ class _HomePageState extends State<HomePage> {
       final output = await widget.upscale(
         input: _input!,
         size: _inputSize!,
+        outputSize: _outputSize,
         mode: _mode,
         cropPosition: _cropPosition,
         onProgress: (p) {
@@ -161,8 +168,9 @@ class _HomePageState extends State<HomePage> {
     final input = _input;
     final inputSize = _inputSize;
     final loaded = input != null && inputSize != null;
-    final needsCrop = loaded && coverSize(inputSize) != frameTvSize;
-    final usesAi = loaded && needsAiUpscale(inputSize, _mode);
+    final outputSize = _outputSize;
+    final needsCrop = loaded && coverSize(inputSize, outputSize) != outputSize;
+    final usesAi = loaded && needsAiUpscale(inputSize, outputSize, _mode);
     final output = _output;
     final error = _error;
     final showDone = output != null && _view == .preview && error == null;
@@ -174,6 +182,7 @@ class _HomePageState extends State<HomePage> {
       ),
       (_, final output?) when showDone => ResultCard.success(
         fileName: output.split('/').last,
+        outputSize: outputSize,
         onReveal: () => widget.revealInFinder(output),
         onOpen: () => widget.openFile(output),
       ),
@@ -197,14 +206,14 @@ class _HomePageState extends State<HomePage> {
               onOpen: _running ? null : _pick,
               onModeChanged: _running ? null : _changeMode,
               onViewChanged: loaded ? (v) => setState(() => _view = v) : null,
-              onMake: loaded && !_running ? _upscale : null,
+              onUpscale: loaded && !_running ? _upscale : null,
             ),
             Expanded(
               child: !loaded
                   ? _Stage(
                       color: Dr.background,
                       card: card,
-                      child: DropZone(onChoose: _pick),
+                      child: DropZone(outputSize: outputSize, onChoose: _pick),
                     )
                   : switch (_view) {
                       .crop => _Stage(
@@ -213,6 +222,7 @@ class _HomePageState extends State<HomePage> {
                         child: CropPicker(
                           path: input,
                           size: inputSize,
+                          outputSize: outputSize,
                           position: _cropPosition,
                           onChanged: _running ? null : _changeCrop,
                           imageBuilder: widget.imageBuilder,
@@ -221,16 +231,18 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ),
                       .preview => _PreviewStage(
+                        outputSize: outputSize,
                         card: card,
-                        caption: 'How it will look on the Frame · 3840 × 2160',
+                        caption: previewCaption(outputSize),
                         child: Stack(
                           fit: .expand,
                           children: [
-                            // The source preview stays underneath so decoding the 4K output
-                            // doesn't flash black.
+                            // The source preview stays underneath so decoding the full-size
+                            // output doesn't flash black.
                             CroppedSource(
                               path: input,
                               size: inputSize,
+                              outputSize: outputSize,
                               position: _cropPosition,
                               imageBuilder: widget.imageBuilder,
                             ),
@@ -245,12 +257,16 @@ class _HomePageState extends State<HomePage> {
                     },
             ),
             if (!loaded)
-              const StatusBar(left: noImageStatus, right: emptyStatusHint)
+              StatusBar(
+                left: noImageStatus,
+                right: emptyStatusHint(outputSize),
+              )
             else
               StatusBar(
                 left: fileSummary(
                   name: input.split('/').last,
                   size: inputSize,
+                  outputSize: outputSize,
                   position: _cropPosition,
                 ),
                 right: statusHint(
@@ -301,50 +317,53 @@ class _Stage extends StatelessWidget {
   }
 }
 
-/// Preview stage: the 16:9 [child] in a bezel, with [caption] below or, when there is one, a
-/// result [card]. Shrinks to fit short windows.
+/// Preview stage: [child] in a bezel of [outputSize]'s shape, with [caption] below or, when there
+/// is one, a result [card]. The bezel takes whatever height the caption or card leaves, so tall
+/// Output Sizes and short windows shrink it rather than overflow.
 class _PreviewStage extends StatelessWidget {
   const _PreviewStage({
+    required this.outputSize,
     required this.child,
     required this.card,
     required this.caption,
   });
 
+  final OutputSize outputSize;
   final Widget child;
   final Widget? card;
   final String caption;
 
   @override
   Widget build(BuildContext context) {
+    final card = this.card;
     return ColoredBox(
       color: Dr.stage,
       child: Padding(
         padding: const .all(32),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final width = constraints.maxWidth.clamp(
-              0,
-              card == null ? previewMaxWidth : doneMaxWidth,
-            );
+            final width = constraints.maxWidth
+                .clamp(0, card == null ? previewMaxWidth : doneMaxWidth)
+                .toDouble();
             return Center(
-              child: FittedBox(
-                fit: .scaleDown,
-                child: SizedBox(
-                  width: width.toDouble(),
-                  child: Column(
-                    mainAxisSize: .min,
-                    crossAxisAlignment: .stretch,
-                    spacing: card == null ? 18 : 20,
-                    children: [
-                      Bezel(child: child),
-                      card ??
-                          Text(
-                            caption,
-                            style: Dr.monoStyle(12),
-                            textAlign: .center,
-                          ),
-                    ],
-                  ),
+              child: SizedBox(
+                width: width,
+                child: Column(
+                  mainAxisSize: .min,
+                  spacing: card == null ? 18 : 20,
+                  children: [
+                    Flexible(
+                      child: Bezel(outputSize: outputSize, child: child),
+                    ),
+                    if (card != null)
+                      SizedBox(width: width, child: card)
+                    else
+                      Text(
+                        caption,
+                        style: Dr.monoStyle(12),
+                        textAlign: .center,
+                      ),
+                  ],
                 ),
               ),
             );

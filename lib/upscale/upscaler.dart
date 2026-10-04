@@ -5,9 +5,9 @@ import 'dart:io';
 
 import 'upscale_options.dart';
 
-/// Port of ~/code/scripts/upscale/upscale.sh: Real-ESRGAN 4x, a `sips` resize to cover the Frame
-/// TV size, then a crop to exactly 3840x2160, keeping the original's color profile and saving
-/// JPEGs at max quality.
+/// Port of ~/code/scripts/upscale/upscale.sh: Real-ESRGAN 4x, a `sips` resize to cover the
+/// Output Size, then a crop to exactly the Output Size, keeping the original's color profile and
+/// saving JPEGs at max quality.
 class Upscaler {
   /// Real-ESRGAN is bundled at Upscaler.app/Contents/Resources/realesrgan.
   static final _resources =
@@ -27,31 +27,38 @@ class Upscaler {
     return (width: value('pixelWidth'), height: value('pixelHeight'));
   }
 
-  static String outputPathFor(String input) {
+  /// `{name}_{W}x{H}.{ext}` next to [input]: `jpg` for JPEG inputs, `png` otherwise.
+  static String outputPathFor(String input, OutputSize outputSize) {
     final dot = input.lastIndexOf('.');
     final base = input.substring(0, dot);
     final ext = input.substring(dot + 1).toLowerCase();
-    return '${base}_4k.${_isJpeg(ext) ? 'jpg' : 'png'}';
+    final (:width, :height) = outputSize;
+    return '${base}_${width}x$height.${_isJpeg(ext) ? 'jpg' : 'png'}';
   }
 
-  /// Upscales [input] to exactly [frameTvSize] and returns the output path. [cropPosition] picks
+  /// Upscales [input] to exactly [outputSize] and returns the output path. [cropPosition] picks
   /// what's kept along the side that overshoots (see [cropOffset]). [onProgress] gets 0..1, or
   /// null while the current step can't report progress.
   static Future<String> upscale({
     required String input,
     required PixelSize size,
+    required OutputSize outputSize,
     required UpscaleMode mode,
     required double cropPosition,
     required void Function(double? progress) onProgress,
   }) async {
-    final output = outputPathFor(input);
-    final covered = coverSize(size);
-    final offset = sipsSafeOffset(covered, cropOffset(covered, cropPosition));
+    final output = outputPathFor(input, outputSize);
+    final covered = coverSize(size, outputSize);
+    final offset = sipsSafeOffset(
+      covered,
+      outputSize,
+      cropOffset(covered, outputSize, cropPosition),
+    );
     final tmp = await Directory.systemTemp.createTemp('upscaler');
     try {
       final mid = '${tmp.path}/mid.png';
       final model = mode.model;
-      // Images already bigger than the Frame TV size only need shrinking, not AI.
+      // Images that already cover the Output Size only need shrinking, not AI.
       if (model == null || covered.width <= size.width) {
         onProgress(null);
         await _run('sips', ['-s', 'format', 'png', input, '--out', mid]);
@@ -90,8 +97,8 @@ class Upscaler {
       final format = _isJpeg(output.split('.').last) ? 'jpeg' : 'png';
       await _run('sips', [
         '-c',
-        '${frameTvSize.height}',
-        '${frameTvSize.width}',
+        '${outputSize.height}',
+        '${outputSize.width}',
         '--cropOffset',
         '${offset.y}',
         '${offset.x}',

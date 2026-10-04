@@ -11,7 +11,7 @@ const _methodLabels = {
   UpscaleMode.plain: 'Plain',
 };
 
-/// Top bar: Open…, upscale method, Crop/Preview view and the Make button. While [running] a 3px
+/// Top bar: Open…, upscale method, Crop/Preview view and the Upscale button. While [running] a 3px
 /// accent line along the bottom edge tracks [progress] (pulsing full-width when it's null).
 class Toolbar extends StatelessWidget {
   const Toolbar({
@@ -23,7 +23,7 @@ class Toolbar extends StatelessWidget {
     required this.onOpen,
     required this.onModeChanged,
     required this.onViewChanged,
-    required this.onMake,
+    required this.onUpscale,
   });
 
   final UpscaleMode mode;
@@ -37,7 +37,7 @@ class Toolbar extends StatelessWidget {
 
   /// Null until an image is loaded.
   final ValueChanged<StageView>? onViewChanged;
-  final VoidCallback? onMake;
+  final VoidCallback? onUpscale;
 
   @override
   Widget build(BuildContext context) {
@@ -113,7 +113,7 @@ class Toolbar extends StatelessWidget {
                     minWidth: running ? 150 : 0,
                     horizontalPadding: 18,
                     fontWeight: .w600,
-                    onPressed: onMake,
+                    onPressed: onUpscale,
                     label: running
                         ? Text.rich(
                             TextSpan(
@@ -131,7 +131,7 @@ class Toolbar extends StatelessWidget {
                               ],
                             ),
                           )
-                        : const Text('Make 4K Art'),
+                        : const Text('Upscale'),
                   ),
                 ],
               ),

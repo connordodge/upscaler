@@ -1,8 +1,10 @@
+import 'dart:math';
 import 'dart:ui' show PathMetric;
 
 import 'package:flutter/material.dart';
 
 import '../image_view.dart';
+import '../status_text.dart';
 import '../theme.dart';
 import '../upscale/upscale_options.dart';
 import 'controls.dart';
@@ -13,8 +15,9 @@ const doneMaxWidth = 780.0;
 
 /// Dashed, rounded drop zone shown before an image is loaded.
 class DropZone extends StatelessWidget {
-  const DropZone({super.key, required this.onChoose});
+  const DropZone({super.key, required this.outputSize, required this.onChoose});
 
+  final OutputSize outputSize;
   final VoidCallback onChoose;
 
   @override
@@ -44,8 +47,7 @@ class DropZone extends StatelessWidget {
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 380),
                   child: Text(
-                    'PNG, JPEG or WebP. It becomes exact 3840 × 2160 art '
-                    'for your Samsung Frame TV.',
+                    emptyStateHint(outputSize),
                     style: Dr.sansStyle(14, .w400, Dr.textMuted),
                     textAlign: .center,
                   ),
@@ -95,63 +97,79 @@ class _DashedBorderPainter extends CustomPainter {
   bool shouldRepaint(_DashedBorderPainter old) => false;
 }
 
-/// A TV bezel around a 16:9 [child].
+/// A TV bezel around a [child] in [outputSize]'s shape, as large as fits its constraints in both
+/// directions, so tall and extreme Output Sizes shrink instead of overflowing.
 class Bezel extends StatelessWidget {
-  const Bezel({super.key, required this.child});
+  const Bezel({super.key, required this.outputSize, required this.child});
 
+  static const _padding = 10.0;
+
+  final OutputSize outputSize;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const .all(10),
-      decoration: BoxDecoration(
-        color: Dr.bezel,
-        borderRadius: .circular(3),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x8C000000),
-            offset: Offset(0, 30),
-            blurRadius: 60,
+    final aspectRatio = outputSize.width / outputSize.height;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Largest screen of this shape inside the constraints, less the bezel itself.
+        final maxWidth = max(0.0, constraints.maxWidth - _padding * 2);
+        final maxHeight = max(0.0, constraints.maxHeight - _padding * 2);
+        final width = min(maxWidth, maxHeight * aspectRatio);
+        return Container(
+          padding: const .all(_padding),
+          decoration: BoxDecoration(
+            color: Dr.bezel,
+            borderRadius: .circular(3),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x8C000000),
+                offset: Offset(0, 30),
+                blurRadius: 60,
+              ),
+            ],
           ),
-        ],
-      ),
-      foregroundDecoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0x0FFFFFFF))),
-      ),
-      child: AspectRatio(
-        aspectRatio: 16 / 9,
-        child: ClipRect(
-          child: ColoredBox(color: Colors.black, child: child),
-        ),
-      ),
+          foregroundDecoration: const BoxDecoration(
+            border: Border(top: BorderSide(color: Color(0x0FFFFFFF))),
+          ),
+          child: SizedBox(
+            width: width,
+            height: width / aspectRatio,
+            child: ClipRect(
+              child: ColoredBox(color: Colors.black, child: child),
+            ),
+          ),
+        );
+      },
     );
   }
 }
 
-/// The part of the source image that survives the crop, scaled to fill its 16:9 parent: the
-/// image is sized to cover the Frame TV and shifted by [cropOffset].
+/// The part of the source image that survives the crop, scaled to fill a parent in
+/// [outputSize]'s shape: the image is sized to cover the Output Size and shifted by [cropOffset].
 class CroppedSource extends StatelessWidget {
   const CroppedSource({
     super.key,
     required this.path,
     required this.size,
+    required this.outputSize,
     required this.position,
     this.imageBuilder = fileImageBuilder,
   });
 
   final String path;
   final PixelSize size;
+  final OutputSize outputSize;
   final double position;
   final ImageBuilder imageBuilder;
 
   @override
   Widget build(BuildContext context) {
-    final covered = coverSize(size);
-    final offset = cropOffset(covered, position);
+    final covered = coverSize(size, outputSize);
+    final offset = cropOffset(covered, outputSize, position);
     return LayoutBuilder(
       builder: (context, constraints) {
-        final scale = constraints.maxWidth / frameTvSize.width;
+        final scale = constraints.maxWidth / outputSize.width;
         return Stack(
           clipBehavior: .hardEdge,
           children: [
@@ -171,13 +189,14 @@ class CroppedSource extends StatelessWidget {
 
 /// Success or error card under the preview/crop stage.
 class ResultCard extends StatelessWidget {
-  const ResultCard.success({
+  ResultCard.success({
     super.key,
     required String fileName,
+    required OutputSize outputSize,
     required VoidCallback this.onReveal,
     required VoidCallback this.onOpen,
   }) : title = 'Saved $fileName',
-       detail = '3840 × 2160 · next to the original',
+       detail = doneDetail(outputSize),
        isError = false;
 
   const ResultCard.error({super.key, required this.title, required this.detail})

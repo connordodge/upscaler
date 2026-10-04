@@ -4,9 +4,10 @@ import 'image_view.dart';
 import 'theme.dart';
 import 'upscale/upscale_options.dart';
 
-/// Shows the image with a draggable 16:9 window marking what ends up on the Frame TV. The image
-/// is shown at its own aspect ratio; the window spans the matching side and slides along the
-/// side that overshoots. [position] is 0 (left/top) to 1 (right/bottom), as in [cropOffset].
+/// Shows the image with a draggable window in [outputSize]'s shape marking what ends up in the
+/// saved image. The image is shown at its own Aspect Ratio; the window spans the matching side and
+/// slides along the side that overshoots. [position] is 0 (left/top) to 1 (right/bottom), as in
+/// [cropOffset].
 ///
 /// While [busy] the image is dimmed, the guides are hidden and a pill with [busyLabel] covers it.
 class CropPicker extends StatelessWidget {
@@ -14,6 +15,7 @@ class CropPicker extends StatelessWidget {
     super.key,
     required this.path,
     required this.size,
+    required this.outputSize,
     required this.position,
     required this.onChanged,
     this.imageBuilder = fileImageBuilder,
@@ -23,6 +25,7 @@ class CropPicker extends StatelessWidget {
 
   final String path;
   final PixelSize size;
+  final OutputSize outputSize;
   final double position;
   final ValueChanged<double>? onChanged;
   final ImageBuilder imageBuilder;
@@ -31,13 +34,13 @@ class CropPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final covered = coverSize(size);
-    final horizontal = covered.width > frameTvSize.width;
-    final vertical = covered.height > frameTvSize.height;
+    final covered = coverSize(size, outputSize);
+    final horizontal = covered.width > outputSize.width;
+    final vertical = covered.height > outputSize.height;
     // Fraction of the overshooting side the crop window covers.
     final windowFraction = horizontal
-        ? frameTvSize.width / covered.width
-        : frameTvSize.height / covered.height;
+        ? outputSize.width / covered.width
+        : outputSize.height / covered.height;
 
     void drag(double delta, double extent) {
       final travel = extent * (1 - windowFraction);
