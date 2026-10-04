@@ -1,0 +1,8 @@
+include: package:flutter_lints/flutter.yaml
+
+# See formatter options: https://codewithandrea.com/articles/updated-formatter-dart-3-8/
+formatter:
+  trailing_commas: preserve
+
+linter:
+  rules:
