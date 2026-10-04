@@ -47,3 +47,8 @@ app.*.map.json
 # Widget Preview related
 .widget_preview/
 dist/
+
+# Design files with personal sample imagery (kept local)
+/design/Upscaler.sketch
+/design/screens/
+/design/painting-4x3.jpg

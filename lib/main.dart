@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'home_page.dart';
+import 'theme.dart';
 
 void main() => runApp(const UpscalerApp());
 
@@ -12,8 +13,9 @@ class UpscalerApp extends StatelessWidget {
     return MaterialApp(
       title: 'Upscaler',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(colorSchemeSeed: Colors.indigo),
-      darkTheme: ThemeData(colorSchemeSeed: Colors.indigo, brightness: .dark),
+      theme: darkroomTheme,
+      darkTheme: darkroomTheme,
+      themeMode: .dark,
       home: const HomePage(),
     );
   }

@@ -46,7 +46,7 @@ class Upscaler {
   }) async {
     final output = outputPathFor(input);
     final covered = coverSize(size);
-    final offset = cropOffset(covered, cropPosition);
+    final offset = sipsSafeOffset(covered, cropOffset(covered, cropPosition));
     final tmp = await Directory.systemTemp.createTemp('upscaler');
     try {
       final mid = '${tmp.path}/mid.png';
