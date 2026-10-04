@@ -7,6 +7,8 @@ class MainFlutterWindow: NSWindow {
     let windowFrame = self.frame
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
+    self.contentMinSize = NSSize(width: 640, height: 720)
+    self.center()
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 

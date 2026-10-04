@@ -6,3 +6,7 @@ formatter:
 
 linter:
   rules:
+analyzer:
+  exclude:
+    - build/**
+    - macos/**
