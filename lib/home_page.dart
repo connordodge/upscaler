@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:developer';
 import 'dart:io';
 
@@ -7,10 +8,14 @@ import 'package:flutter/material.dart';
 
 import 'crop_picker.dart';
 import 'image_view.dart';
+import 'output_settings.dart';
 import 'status_text.dart';
 import 'theme.dart';
+import 'upscale/size_editing.dart';
+import 'upscale/size_presets.dart';
 import 'upscale/upscale_options.dart';
 import 'upscale/upscaler.dart';
+import 'widgets/output_bar.dart';
 import 'widgets/stage_parts.dart';
 import 'widgets/toolbar.dart';
 
@@ -21,6 +26,7 @@ typedef ReadSize = Future<PixelSize> Function(String path);
 typedef RunUpscale = Future<String> Function({
   required String input,
   required PixelSize size,
+  required OutputSize outputSize,
   required UpscaleMode mode,
   required double cropPosition,
   required void Function(double? progress) onProgress,
@@ -38,11 +44,13 @@ Future<String?> _pickWithDialog() async {
 void _reveal(String path) => Process.run('open', ['-R', path]);
 void _open(String path) => Process.run('open', [path]);
 
-/// The seams default to the real file dialog, `sips`/Real-ESRGAN pipeline and file decoding; widget
-/// tests swap them out.
+/// The seams default to the real file dialog, `sips`/Real-ESRGAN pipeline, file decoding and
+/// `shared_preferences`; widget tests swap them out.
 class HomePage extends StatefulWidget {
   const HomePage({
     super.key,
+    this.initialSettings = defaultOutputSettings,
+    this.settingsStore = const OutputSettingsStore(),
     this.pickImage = _pickWithDialog,
     this.readSize = Upscaler.readSize,
     this.upscale = Upscaler.upscale,
@@ -51,6 +59,10 @@ class HomePage extends StatefulWidget {
     this.openFile = _open,
   });
 
+  /// The Output Size, Aspect Ratio and Ratio Lock the page starts with, as loaded from
+  /// [settingsStore]. The page owns them from then on and saves every applied change.
+  final OutputSettings initialSettings;
+  final OutputSettingsStore settingsStore;
   final PickImage pickImage;
   final ReadSize readSize;
   final RunUpscale upscale;
@@ -63,6 +75,18 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  /// Every saved image is exactly this; the crop, preview, copy and upscale all read it from here.
+  /// It, [_ratio] and [_ratioLocked] only change through [_applyOutput].
+  late OutputSize _outputSize = widget.initialSettings.size;
+  late Ratio _ratio = widget.initialSettings.ratio;
+  late bool _ratioLocked = widget.initialSettings.locked;
+
+  OutputSettings get _settings =>
+      (size: _outputSize, ratio: _ratio, locked: _ratioLocked);
+
+  /// Fields whose typed text was rejected. Nothing of it is applied; while any is invalid, Upscale
+  /// is disabled and the status bar asks for a fix.
+  Set<Side> _invalid = {};
   String? _input;
   PixelSize? _inputSize;
   double _cropPosition = 0.5;
@@ -123,7 +147,73 @@ class _HomePageState extends State<HomePage> {
     _error = null;
   });
 
+  /// The one path for Output Size, Aspect Ratio and Ratio Lock changes. A new Output Size reshapes
+  /// the crop, so it recenters and any result or error goes stale. Anything that changed is saved.
+  void _applyOutput({OutputSize? size, Ratio? ratio, bool? locked}) {
+    final before = _settings;
+    setState(() {
+      if (size != null && size != _outputSize) {
+        _outputSize = size;
+        _cropPosition = 0.5;
+        _output = null;
+        _error = null;
+      }
+      if (ratio != null) _ratio = ratio;
+      if (locked != null) _ratioLocked = locked;
+    });
+    if (_settings != before) unawaited(_save(_settings));
+  }
+
+  /// A failed save only costs the settings next launch, so it's logged and the app carries on.
+  Future<void> _save(OutputSettings settings) async {
+    try {
+      await widget.settingsStore.save(settings);
+    } catch (e, st) {
+      log('Failed to save the Output settings', error: e, stackTrace: st);
+    }
+  }
+
+  /// A ratio chip jumps to that ratio's largest Size Preset, replacing both fields.
+  void _pickRatio(Ratio ratio) =>
+      _pickPreset(ratio, presetsFor(ratio).first.size);
+
+  void _pickPreset(Ratio ratio, OutputSize size) {
+    setState(() => _invalid = {});
+    _applyOutput(size: size, ratio: ratio);
+  }
+
+  /// Closing the lock in `Custom` keeps the exact current W:H; otherwise only the lock changes.
+  void _changeLock(bool locked) => _applyOutput(
+    locked: locked,
+    ratio: locked && !isPresetRatio(_ratio) ? reducedRatio(_outputSize) : null,
+  );
+
+  /// Applies text typed into [side], or marks the field invalid and applies nothing.
+  void _typeSize(Side side, String text) {
+    final edit = typedEdit(
+      size: _outputSize,
+      ratio: _ratio,
+      locked: _ratioLocked,
+      side: side,
+      text: text,
+    );
+    if (edit == null) {
+      setState(() => _invalid = {..._invalid, side});
+      return;
+    }
+    // A locked edit sets both sides, so it replaces the other field too.
+    setState(
+      () => _invalid = _ratioLocked ? {} : ({..._invalid}..remove(side)),
+    );
+    _applyOutput(size: edit.size, ratio: edit.ratio);
+  }
+
+  void _revertSize(Side side) =>
+      setState(() => _invalid = {..._invalid}..remove(side));
+
   Future<void> _upscale() async {
+    // The click that got here first applied any typed text; if that was invalid, don't start.
+    if (_invalid.isNotEmpty) return;
     setState(() {
       _running = true;
       _progress = 0;
@@ -134,6 +224,7 @@ class _HomePageState extends State<HomePage> {
       final output = await widget.upscale(
         input: _input!,
         size: _inputSize!,
+        outputSize: _outputSize,
         mode: _mode,
         cropPosition: _cropPosition,
         onProgress: (p) {
@@ -161,11 +252,13 @@ class _HomePageState extends State<HomePage> {
     final input = _input;
     final inputSize = _inputSize;
     final loaded = input != null && inputSize != null;
-    final needsCrop = loaded && coverSize(inputSize) != frameTvSize;
-    final usesAi = loaded && needsAiUpscale(inputSize, _mode);
+    final outputSize = _outputSize;
+    final needsCrop = loaded && coverSize(inputSize, outputSize) != outputSize;
+    final usesAi = loaded && needsAiUpscale(inputSize, outputSize, _mode);
     final output = _output;
     final error = _error;
     final showDone = output != null && _view == .preview && error == null;
+    final fixHint = fixSizeHint(_invalid);
 
     final ResultCard? card = switch ((error, output)) {
       (final error?, _) => ResultCard.error(
@@ -174,6 +267,7 @@ class _HomePageState extends State<HomePage> {
       ),
       (_, final output?) when showDone => ResultCard.success(
         fileName: output.split('/').last,
+        outputSize: outputSize,
         onReveal: () => widget.revealInFinder(output),
         onOpen: () => widget.openFile(output),
       ),
@@ -197,14 +291,28 @@ class _HomePageState extends State<HomePage> {
               onOpen: _running ? null : _pick,
               onModeChanged: _running ? null : _changeMode,
               onViewChanged: loaded ? (v) => setState(() => _view = v) : null,
-              onMake: loaded && !_running ? _upscale : null,
+              onUpscale: loaded && !_running && _invalid.isEmpty
+                  ? _upscale
+                  : null,
+            ),
+            OutputBar(
+              outputSize: outputSize,
+              ratio: _ratio,
+              locked: _ratioLocked,
+              enabled: !_running,
+              invalid: _invalid,
+              onRatioPicked: _pickRatio,
+              onPresetPicked: _pickPreset,
+              onLockChanged: _changeLock,
+              onSizeTyped: _typeSize,
+              onSizeReverted: _revertSize,
             ),
             Expanded(
               child: !loaded
                   ? _Stage(
                       color: Dr.background,
                       card: card,
-                      child: DropZone(onChoose: _pick),
+                      child: DropZone(outputSize: outputSize, onChoose: _pick),
                     )
                   : switch (_view) {
                       .crop => _Stage(
@@ -213,6 +321,7 @@ class _HomePageState extends State<HomePage> {
                         child: CropPicker(
                           path: input,
                           size: inputSize,
+                          outputSize: outputSize,
                           position: _cropPosition,
                           onChanged: _running ? null : _changeCrop,
                           imageBuilder: widget.imageBuilder,
@@ -221,16 +330,18 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ),
                       .preview => _PreviewStage(
+                        outputSize: outputSize,
                         card: card,
-                        caption: 'How it will look on the Frame · 3840 × 2160',
+                        caption: previewCaption(outputSize),
                         child: Stack(
                           fit: .expand,
                           children: [
-                            // The source preview stays underneath so decoding the 4K output
-                            // doesn't flash black.
+                            // The source preview stays underneath so decoding the full-size
+                            // output doesn't flash black.
                             CroppedSource(
                               path: input,
                               size: inputSize,
+                              outputSize: outputSize,
                               position: _cropPosition,
                               imageBuilder: widget.imageBuilder,
                             ),
@@ -245,23 +356,29 @@ class _HomePageState extends State<HomePage> {
                     },
             ),
             if (!loaded)
-              const StatusBar(left: noImageStatus, right: emptyStatusHint)
+              StatusBar(
+                left: noImageStatus,
+                right: fixHint ?? emptyStatusHint(outputSize),
+              )
             else
               StatusBar(
                 left: fileSummary(
                   name: input.split('/').last,
                   size: inputSize,
+                  outputSize: outputSize,
                   position: _cropPosition,
                 ),
-                right: statusHint(
-                  view: _view,
-                  needsCrop: needsCrop,
-                  running: _running,
-                  usesAi: usesAi,
-                  progress: _progress,
-                  done: output != null,
-                  failed: error != null,
-                ),
+                right:
+                    fixHint ??
+                    statusHint(
+                      view: _view,
+                      needsCrop: needsCrop,
+                      running: _running,
+                      usesAi: usesAi,
+                      progress: _progress,
+                      done: output != null,
+                      failed: error != null,
+                    ),
               ),
           ],
         ),
@@ -301,50 +418,53 @@ class _Stage extends StatelessWidget {
   }
 }
 
-/// Preview stage: the 16:9 [child] in a bezel, with [caption] below or, when there is one, a
-/// result [card]. Shrinks to fit short windows.
+/// Preview stage: [child] in a bezel of [outputSize]'s shape, with [caption] below or, when there
+/// is one, a result [card]. The bezel takes whatever height the caption or card leaves, so tall
+/// Output Sizes and short windows shrink it rather than overflow.
 class _PreviewStage extends StatelessWidget {
   const _PreviewStage({
+    required this.outputSize,
     required this.child,
     required this.card,
     required this.caption,
   });
 
+  final OutputSize outputSize;
   final Widget child;
   final Widget? card;
   final String caption;
 
   @override
   Widget build(BuildContext context) {
+    final card = this.card;
     return ColoredBox(
       color: Dr.stage,
       child: Padding(
         padding: const .all(32),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final width = constraints.maxWidth.clamp(
-              0,
-              card == null ? previewMaxWidth : doneMaxWidth,
-            );
+            final width = constraints.maxWidth
+                .clamp(0, card == null ? previewMaxWidth : doneMaxWidth)
+                .toDouble();
             return Center(
-              child: FittedBox(
-                fit: .scaleDown,
-                child: SizedBox(
-                  width: width.toDouble(),
-                  child: Column(
-                    mainAxisSize: .min,
-                    crossAxisAlignment: .stretch,
-                    spacing: card == null ? 18 : 20,
-                    children: [
-                      Bezel(child: child),
-                      card ??
-                          Text(
-                            caption,
-                            style: Dr.monoStyle(12),
-                            textAlign: .center,
-                          ),
-                    ],
-                  ),
+              child: SizedBox(
+                width: width,
+                child: Column(
+                  mainAxisSize: .min,
+                  spacing: card == null ? 18 : 20,
+                  children: [
+                    Flexible(
+                      child: Bezel(outputSize: outputSize, child: child),
+                    ),
+                    if (card != null)
+                      SizedBox(width: width, child: card)
+                    else
+                      Text(
+                        caption,
+                        style: Dr.monoStyle(12),
+                        textAlign: .center,
+                      ),
+                  ],
                 ),
               ),
             );

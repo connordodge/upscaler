@@ -12,29 +12,34 @@ void main() {
 
   const sample = String.fromEnvironment('SAMPLE');
 
-  for (final mode in [UpscaleMode.painting, UpscaleMode.plain]) {
-    testWidgets('${mode.name} upscale makes exact Frame TV art', (
-      tester,
-    ) async {
-      final dir = await Directory.systemTemp.createTemp('upscaler_test');
-      addTearDown(() => dir.delete(recursive: true));
-      final input = File(sample)
-          .copySync('${dir.path}/${sample.split('/').last}')
-          .path;
-      final size = await Upscaler.readSize(input);
-      final progress = <double?>[];
+  for (final outputSize in [defaultOutputSize, (width: 1000, height: 1500)]) {
+    final (:width, :height) = outputSize;
+    for (final mode in [UpscaleMode.painting, UpscaleMode.plain]) {
+      testWidgets('${mode.name} upscale makes exact $width × $height art', (
+        tester,
+      ) async {
+        final dir = await Directory.systemTemp.createTemp('upscaler_test');
+        addTearDown(() => dir.delete(recursive: true));
+        final input = File(sample)
+            .copySync('${dir.path}/${sample.split('/').last}')
+            .path;
+        final size = await Upscaler.readSize(input);
+        final progress = <double?>[];
 
-      final output = await Upscaler.upscale(
-        input: input,
-        size: size,
-        mode: mode,
-        cropPosition: 1,
-        onProgress: progress.add,
-      );
+        final output = await Upscaler.upscale(
+          input: input,
+          size: size,
+          outputSize: outputSize,
+          mode: mode,
+          cropPosition: 1,
+          onProgress: progress.add,
+        );
 
-      expect(output, Upscaler.outputPathFor(input));
-      expect(await Upscaler.readSize(output), frameTvSize);
-      expect(progress.last, 1);
-    }, skip: sample.isEmpty);
+        expect(output, Upscaler.outputPathFor(input, outputSize));
+        expect(output, endsWith('_${width}x$height.${output.split('.').last}'));
+        expect(await Upscaler.readSize(output), outputSize);
+        expect(progress.last, 1);
+      }, skip: sample.isEmpty);
+    }
   }
 }

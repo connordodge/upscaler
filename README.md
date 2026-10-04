@@ -1,9 +1,9 @@
 # Upscaler
 
-A small Mac app that turns an image into exact **3840 × 2160** art for the Samsung Frame TV.
+A small Mac app that turns an image into art at an exact **Output Size** (width × height in pixels). The default Output Size is 3840 × 2160, the `Frame TV 4K` Size Preset.
 
 - AI upscaling with [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), running on the Mac's GPU
-- If the image isn't 16:9, it's scaled to fill 3840 × 2160 and you drag a box to choose what gets cropped
+- If the image's Aspect Ratio doesn't match the Output Size, it's scaled to fill the Output Size and you drag a box to choose what gets cropped. Nothing is squished or letterboxed
 - Keeps the original color profile; JPEGs are saved at maximum quality
 
 ## Download
@@ -15,12 +15,13 @@ Open the DMG and drag **Upscaler** into **Applications**. The app is signed and 
 ## Use
 
 1. Drop an image onto the window, or click **Choose Image…** (PNG, JPEG or WebP).
-2. If the image isn't 16:9, drag the white box to pick which part is kept.
-3. Pick a mode:
+2. Choose the Output Size in the Output bar: an Aspect Ratio chip, a Size Preset from **Presets**, or type W and H (256–8192 px). With the Ratio Lock closed, the other side follows the Aspect Ratio. Your choice is remembered next time you open the app.
+3. If the image's Aspect Ratio doesn't match the Output Size, drag the white box to pick which part is kept.
+4. Pick a mode:
    - **Photo / Painting**: AI upscale, sharpest result
    - **Illustration**: AI upscale tuned for flat art
    - **Plain Resize**: no AI; looks exactly like the original, slightly softer
-4. Click **Make Frame TV Art**. The result is saved next to the original as `<name>_4k.jpg` (or `.png`).
+5. Click **Upscale**. The result is saved next to the original as `<name>_<W>x<H>.jpg` (or `.png`), e.g. `garden_3840x2160.jpg`.
 
 ## Development
 
